@@ -7,9 +7,9 @@ import (
 
 //	错误
 const (
-	ErrorLift = "lift append a error"
-	ErrorLiftOverweight = ErrorLift + ":overweight"
-	ErrorLiftEmpty = ErrorLift + ":empty"
+	ErrorLift               = "lift append a error"
+	ErrorLiftOverweight     = ErrorLift + ":overweight"
+	ErrorLiftEmpty          = ErrorLift + ":empty"
 	ErrorLiftPersonNotFound = ErrorLift + ":person not found"
 )
 
@@ -18,11 +18,20 @@ const (
 	//	关机
 	StatusLiftShutdown = iota
 	//	静止
-	StatusLiftStatic
+	StatusLiftWait
+	//	开门状态
+	StatusOpen
 	//	向下
 	StatusLiftDown
 	//	向上
 	StatusLiftUp
+)
+
+const (
+	//	移动一层的时间
+	MoveSpeed = 5
+	//	等待的时间
+	WaitTime = 5
 )
 
 type Lift struct {
@@ -32,8 +41,6 @@ type Lift struct {
 	bottom int
 	//	当前层
 	Level int
-	//	速度：移动一层需要的时间,单位（秒）
-	speed float32
 	//	容量 单位（个人）
 	capacity int
 	//	电梯内所有人，键值为person id
@@ -49,9 +56,9 @@ type Lift struct {
 
 	//	电梯运行程序channel
 	pressLevel chan int
-	pressDown chan int
-	pressUp chan int
-	stop chan bool
+	pressDown  chan int
+	pressUp    chan int
+	stop       chan bool
 }
 
 func NewLift(capacity int, level int, top int, bottom int) *Lift {
@@ -59,7 +66,6 @@ func NewLift(capacity int, level int, top int, bottom int) *Lift {
 		top,
 		bottom,
 		level,
-		2.0,
 		capacity,
 		make(map[int]*Person),
 		StatusLiftShutdown,
@@ -92,7 +98,7 @@ func (lift *Lift) RemovePersonById(id int) error {
 		delete(lift.persons, id)
 		return nil
 	}
-	return errors.New(ErrorLiftPersonNotFound+" by id " + strconv.Itoa(id))
+	return errors.New(ErrorLiftPersonNotFound + " by id " + strconv.Itoa(id))
 }
 
 //	按电梯内的数字键
@@ -101,6 +107,9 @@ func (lift *Lift) PressDown(level int) {
 		return
 	}
 	lift.levelPress[level] = true
+	if lift.status == StatusLiftWait {
+		lift.pressDown <- level
+	}
 }
 
 //	按电梯外的向上键
@@ -109,8 +118,10 @@ func (lift *Lift) PressUp(level int) {
 		return
 	}
 	lift.upPress[level] = true
+	if lift.status == StatusLiftWait {
+		lift.pressUp <- level
+	}
 }
-
 
 //	按电梯外的向下键
 func (lift *Lift) PressLevel(level int) {
@@ -118,26 +129,47 @@ func (lift *Lift) PressLevel(level int) {
 		return
 	}
 	lift.downPress[level] = true
+	if lift.status == StatusLiftWait {
+		lift.pressLevel <- level
+	}
 }
 
 //	运行
 func (lift *Lift) Run() error {
+	lift.status = StatusLiftWait
+
+	return nil
+}
+
+//	等待状态
+func (lift *Lift) Wait() {
 	go func() {
+		var goal int
 		for {
+			lift.status = StatusLiftWait
+
 			select {
-				case <-lift.pressLevel:
-				//	按电梯内的数字键
-				case <-lift.pressUp:
-				//	按电梯外的向上键
-				case <-lift.pressDown:
-				//	按电梯外的向下键
-				case <-lift.stop:
-					return
+			case goal = <-lift.pressLevel:
+			//	按电梯内的数字键
+			case goal = <-lift.pressUp:
+			//	按电梯外的向上键
+			case goal = <-lift.pressDown:
+			//	按电梯外的向下键
+			case <-lift.stop:
+				lift.status = StatusLiftShutdown
+				return
 				//	停止
+			}
+
+			if goal < lift.Level {
+				lift.status = StatusLiftDown
+				/* 向下移动 */
+			} else if goal > lift.Level {
+				lift.status = StatusLiftUp
+				/* 向上移动 */
 			}
 		}
 	}()
-	return nil
 }
 
 func (lift *Lift) Stop() error {
